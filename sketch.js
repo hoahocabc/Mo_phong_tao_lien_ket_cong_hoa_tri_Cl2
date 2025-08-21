@@ -1,5 +1,6 @@
 // Mô phỏng liên kết cộng hóa trị của phân tử Cl2
 // Tác giả: Gemini
+// Sửa: giữ kiểu gấp khúc cho lớp xen phủ, quay nhanh liên tục, giảm đường kính lớp xen phủ nhẹ giữ nguyên độ dày
 
 let fontRegular;
 let playButton, resetButton, instructionsButton, overlapButton, sphereButton, labelButton;
@@ -9,9 +10,12 @@ let state = "idle";
 let progress = 0;
 let bondingProgress = 0;
 let cloudRotationAngle = 0;
-const slowSpinSpeed = 0.025;
-const fastSpinSpeed = 0.8; // Tốc độ quay nhanh cho lớp xen phủ (đã được tăng)
-const sphereRotationSpeed = 0.8; // Tốc độ xoay của mặt cầu (đã được tăng)
+
+// Tốc độ bây giờ là rad/giây (nhân với deltaTime để có rad/frame)
+const slowSpinSpeed = 0.6;     // rad/giây (lớp trong quay chậm)
+const fastSpinSpeed = 8.0;     // rad/giây (lớp xen phủ quay nhanh liên tục)
+const sphereRotationSpeed = 1.5; // rad/giây (mặt cầu)
+
 let clSphereRotation1 = 0;
 let clSphereRotation2 = 0;
 
@@ -36,7 +40,7 @@ function preload() {
 
 function setup() {
   createCanvas(windowWidth, windowHeight, WEBGL);
-  frameRate(60); // Cố định tốc độ khung hình để đảm bảo chuyển động mượt mà
+  frameRate(60); // Cố định tốc độ khung hình mong muốn
   background(0);
   perspective(PI / 3, width / height, 0.1, 4000);
 
@@ -172,9 +176,14 @@ function createUI() {
   `;
   instructionsPopup.html(popupContent);
 
-  document.getElementById('closePopup').addEventListener('click', () => {
-    instructionsPopup.style('display', 'none');
-  });
+  setTimeout(() => {
+    const closeBtn = document.getElementById('closePopup');
+    if (closeBtn) {
+      closeBtn.addEventListener('click', () => {
+        instructionsPopup.style('display', 'none');
+      });
+    }
+  }, 0);
 
   positionButtons();
 }
@@ -196,7 +205,6 @@ function styleButton(btn, isTransparent = false) {
     btn.style("border", "1px solid #fff");
     btn.style("box-shadow", "none");
   } else {
-    // Hiệu ứng đổi màu
     btn.style("border", "none");
     btn.style("background", "linear-gradient(145deg, #6a82fb, #fc5c7d)");
     btn.style("box-shadow", "3px 3px 6px rgba(0,0,0,0.4)");
@@ -256,6 +264,9 @@ function drawBillboardText(textStr, x, y, z, size) {
 }
 
 function draw() {
+  // deltaTime (ms) dùng để điều chỉnh chuyển động theo thời gian thực
+  const dt = deltaTime / 1000.0; // giây
+
   background(0);
 
   if (keyIsDown(17) && mouseIsPressed) {
@@ -301,18 +312,23 @@ function draw() {
   for (let atom of atoms) {
     push();
     translate(atom.pos.x, atom.pos.y, 0);
-    atom.show();
+    atom.show(dt); // truyền dt để các electron xoay mượt theo thời gian
     pop();
   }
   
   if (showOverlap) {
-    cloudRotationAngle += fastSpinSpeed;
+    // tăng góc theo rad/giây nhân dt -> mượt và độc lập FPS
+    cloudRotationAngle += fastSpinSpeed * dt;
+    // giữ góc trong phạm vi [0, TWO_PI)
+    cloudRotationAngle = cloudRotationAngle % TWO_PI;
     drawElectronClouds();
   }
   
   if (showSpheres) {
-    clSphereRotation1 += sphereRotationSpeed;
-    clSphereRotation2 -= sphereRotationSpeed; // Đã đảo chiều quay của mặt cầu thứ hai
+    clSphereRotation1 += sphereRotationSpeed * dt;
+    clSphereRotation2 -= sphereRotationSpeed * dt; // Đã đảo chiều quay của mặt cầu thứ hai
+    clSphereRotation1 = clSphereRotation1 % TWO_PI;
+    clSphereRotation2 = clSphereRotation2 % TWO_PI;
     drawElectronSpheres();
   }
 }
@@ -320,6 +336,11 @@ function draw() {
 function drawElectronClouds() {
   const outerRadius = atoms[0].shellRadii[2];
   const cloudWidth = 18;
+
+  // Giảm đường kính lớp xen phủ một chút (độ dày giữ nguyên)
+  // cloudInset là khoảng rút vào từ bán kính vỏ ngoài để giảm đường kính xen phủ
+  const cloudInset = 8; // giảm 8 pixel (tùy chỉnh nếu muốn lớn/nhỏ hơn)
+  const cloudOuterRadius = max(4, outerRadius - cloudInset);
 
   let blendedColor = lerpColor(color(255, 150, 0), color(0, 255, 0), 0.35);
   blendedColor.setAlpha(255);
@@ -329,7 +350,8 @@ function drawElectronClouds() {
   rotateZ(cloudRotationAngle);
   noStroke();
   fill(blendedColor);
-  torus(outerRadius, cloudWidth, 12, 12);
+  // Giữ kiểu gấp khúc: số segment thấp (12, 12) -> facet/khúc
+  torus(cloudOuterRadius, cloudWidth, 12, 12);
   pop();
 
   push();
@@ -337,7 +359,7 @@ function drawElectronClouds() {
   rotateZ(cloudRotationAngle);
   noStroke();
   fill(blendedColor);
-  torus(outerRadius, cloudWidth, 12, 12);
+  torus(cloudOuterRadius, cloudWidth, 12, 12);
   pop();
 }
 
@@ -351,7 +373,6 @@ function drawElectronSpheres() {
 
   // Vẽ mặt cầu Clo 1
   push();
-  // Đảm bảo mặt cầu dịch chuyển đến vị trí của nó trước khi xoay
   translate(cl1Atom.pos.x, cl1Atom.pos.y, 0); 
   rotateY(clSphereRotation1);
   noStroke();
@@ -361,7 +382,6 @@ function drawElectronSpheres() {
 
   // Vẽ mặt cầu Clo 2
   push();
-  // Đảm bảo mặt cầu dịch chuyển đến vị trí của nó trước khi xoay
   translate(cl2Atom.pos.x, cl2Atom.pos.y, 0);
   rotateY(clSphereRotation2);
   noStroke();
@@ -382,8 +402,7 @@ class Atom {
 
     this.nonBondingPairAngles = [PI / 2, 3 * PI / 2, (x < 0) ? PI : 0];
 
-
-    this.otherElectronCol = (electronCol.levels[0] === 255) ? color(0, 255, 0) : color(255, 150, 0);
+    this.otherElectronCol = (electronCol.levels && electronCol.levels[0] === 255) ? color(0, 255, 0) : color(255, 150, 0);
 
     for (let i = 0; i < shellCounts.length; i++) {
       let radius = baseR + i * increment;
@@ -421,7 +440,8 @@ class Atom {
     outerShell[sharedIndex].isShared = true;
   }
 
-  show() {
+  // nhận dt (giây) để xoay electron mượt theo thời gian
+  show(dt = 0) {
     push();
     fill(255, 0, 0);
     sphere(20);
@@ -477,11 +497,13 @@ class Atom {
       let nonSharedCount = 0;
       for (let j = 0; j < this.shells[i].length; j++) {
         let e = this.shells[i][j];
-        let ex, ey;
+        let ex = 0, ey = 0;
 
         // Logic tốc độ quay: lớp 1 và 2 quay chậm, lớp ngoài cùng (khi không xen phủ) cũng quay chậm
         if (i < 2 || (i === 2 && state !== "done" && state !== "bonding")) {
-          e.angle += slowSpinSpeed;
+          // xoay theo dt để mượt
+          e.angle += slowSpinSpeed * dt;
+          e.angle = e.angle % TWO_PI;
           ex = cos(e.angle) * radius;
           ey = sin(e.angle) * radius;
         } else {
@@ -521,7 +543,8 @@ class Atom {
               nonSharedCount++;
             }
           } else { // Lớp 1 và 2 vẫn quay như bình thường
-            e.angle += slowSpinSpeed;
+            e.angle += slowSpinSpeed * dt;
+            e.angle = e.angle % TWO_PI;
             ex = cos(e.angle) * radius;
             ey = sin(e.angle) * radius;
           }
