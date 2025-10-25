@@ -1,7 +1,3 @@
-// Mô phỏng liên kết cộng hóa trị của phân tử Cl2
-// Tác giả: Gemini
-// Sửa: giữ kiểu gấp khúc cho lớp xen phủ, quay nhanh liên tục, giảm đường kính lớp xen phủ nhẹ giữ nguyên độ dày
-
 let fontRegular;
 let playButton, resetButton, instructionsButton, overlapButton, sphereButton, labelButton, spinButton;
 let titleDiv, footerDiv, instructionsPopup;
@@ -51,7 +47,7 @@ function setup() {
   textAlign(CENTER, CENTER);
   noStroke();
 
-  titleDiv = createDiv("MÔ PHỎNG LIÊN KẾT CỘNG HOÁ TRỊ Cl₂");
+  titleDiv = createDiv("MÔ PHỎNG LIÊN KẾT CỘNG HOÁ TRỊ TRONG PHÂN TỬ Cl₂");
   titleDiv.style("position", "absolute");
   titleDiv.style("top", "10px");
   titleDiv.style("width", "100%");
@@ -131,10 +127,14 @@ function createUI() {
   sphereButton.mousePressed(() => {
     showSpheres = !showSpheres;
     if (showSpheres) {
+      // Khi bật lớp cầu: tắt chế độ xen phủ và chuyển sang giao diện mặt cầu
       showOverlap = false;
       sphereButton.html("Tắt lớp cầu");
       overlapButton.html("Bật xen phủ");
+      // Lưu ý: tắt "các nguồn sáng cố định" sẽ được xử lý trong draw() —
+      // khi showSpheres === true thì draw() sẽ không bật pointLight cố định nữa.
     } else {
+      // Khi tắt mặt cầu: phục hồi các nguồn sáng cố định trong draw()
       sphereButton.html("Bật lớp cầu");
     }
   });
@@ -297,8 +297,19 @@ function draw() {
 
   translate(panX, panY);
 
-  ambientLight(80);
-  pointLight(255, 255, 255, 0, 0, 300);
+  // IMPORTANT: Khi showSpheres === true, ta tắt "các nguồn sáng cố định" (ambient + point light cố định)
+  // và chuyển sang hệ thống ánh sáng động bên trong drawElectronSpheres() (ambient + 2 directional lights di chuyển).
+  // Khi showSpheres === false thì bật lại các nguồn sáng cố định (ambient + pointLight).
+  if (!showSpheres) {
+    // fixed ambient + fixed point light for regular view (restored when sphere view off)
+    // Tăng sáng ambient để các vật thể rõ hơn
+    ambientLight(160);
+    // pointLight màu trắng ở phía trước (giữ mức max màu), giữ vị trí gần hơn để highlight rõ hơn
+    pointLight(255, 255, 255, 0, 0, 300);
+  } else {
+    // Do nothing here: drawElectronSpheres() will establish its ambient + moving directional lights.
+    // Avoid creating additional fixed point lights so highlights come only from the moving directional lights.
+  }
 
   if (state === "animating") {
     progress += 0.01;
@@ -383,31 +394,54 @@ function drawElectronClouds() {
   pop();
 }
 
+// CẬP NHẬT: drawElectronSpheres sử dụng mô hình chiếu sáng tương tự File 1
+// - ambientLight và 2 directional lights di chuyển (tạo highlight động)
+// - Sử dụng ambientMaterial + specularMaterial để giữ màu nguyên của mặt cầu nhưng cho highlight
+// - Đảm bảo shininess và chi tiết sphere cao (64) để bóng và highlight mượt
+// Tăng cường độ ánh sáng ở đây để mặt cầu sáng hơn
 function drawElectronSpheres() {
-  const cl1Atom = atoms[0];
-  const cl2Atom = atoms[1];
+  // Slightly stronger ambient for sphere view (increased)
+  ambientLight(140);
 
-  let lightGreen = color(144, 238, 144);
-  const clOrbitalRadius = clOuterRadius + 6;
-  const sphereDetail = 64;  
+  // TWO MOVING DIRECTIONAL LIGHTS (positions move with frameCount to create dynamic highlights)
+  let aA = frameCount * 0.010;
+  let LAx = cos(aA) * 380;
+  let LAy = sin(aA) * 240;
+  // Light A: slower, wider orbit — increased intensity
+  directionalLight(200, 200, 200, LAx, LAy, -0.25);
 
-  // Vẽ mặt cầu Clo 1
-  push();
-  translate(cl1Atom.pos.x, cl1Atom.pos.y, 0);  
-  rotateY(clSphereRotation1);
-  noStroke();
-  fill(lightGreen);
-  sphere(clOrbitalRadius, sphereDetail);
-  pop();
+  let aB = frameCount * 0.018 + PI / 4;
+  let LBx = cos(aB) * 210;
+  let LBy = sin(aB) * 170;
+  // Light B: faster, tighter orbit — increased intensity
+  directionalLight(140, 140, 140, -LBx, -LBy, 0.2);
 
-  // Vẽ mặt cầu Clo 2
-  push();
-  translate(cl2Atom.pos.x, cl2Atom.pos.y, 0);
-  rotateY(clSphereRotation2);
-  noStroke();
-  fill(lightGreen);
-  sphere(clOrbitalRadius, sphereDetail);
-  pop();
+  // For each atom, render a sphere using material functions so color remains correct
+  for (let i = 0; i < atoms.length; i++) {
+    const atom = atoms[i];
+    if (atom.shellRadii.length > 0) {
+      push();
+      translate(atom.pos.x, atom.pos.y, 0);
+      noStroke();
+      // Slightly higher shininess so highlights from moving lights are visible
+      shininess(85);
+
+      // Preserve the existing color of the sphere (atom.electronColor)
+      const r = red(atom.electronColor);
+      const g = green(atom.electronColor);
+      const b = blue(atom.electronColor);
+
+      ambientMaterial(r, g, b);
+      // Make specular slightly brighter than base color for clearer highlights
+      specularMaterial(min(255, r + 45), min(255, g + 45), min(255, b + 45));
+
+      const clOrbitalRadius = clOuterRadius + 6;
+      const sphereDetail = 64;  
+      rotateY(i === 0 ? clSphereRotation1 : clSphereRotation2);
+      sphere(clOrbitalRadius, sphereDetail, sphereDetail);
+      pop();
+    }
+  }
 }
 
 class Atom {
@@ -417,6 +451,7 @@ class Atom {
     this.protons = protons;
     this.shells = [];
     this.shellRadii = [];
+    this.electronColor = electronCol; // <-- lưu màu electron để dùng cho mặt cầu
     let baseR = 50;
     let increment = 40;
 
@@ -519,7 +554,7 @@ class Atom {
         let e = this.shells[i][j];
         let ex = 0, ey = 0;
 
-        // Logic tốc độ quay: lớp 1 và 2 quay chậm, lớp ngoài cùng (khi không xen phủ) cũng quay chậm
+        // Logic tốc độ quay: lớp 1 và 2 quay chậm, lớp xen phủ quay nhanh, lớp ngoài cùng (khi không xen phủ) cũng quay chậm
         if (i < 2 || (i === 2 && state !== "done" && state !== "bonding")) {
           // Chỉ xoay khi dt > 0
           e.angle += slowSpinSpeed * dt;
